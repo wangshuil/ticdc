@@ -252,32 +252,41 @@ func (h *sortHeap) Pop() interface{} {
 
 // readPolymorphicEvent reads a PolymorphicEvent from file reader and also advance reader
 // TODO: batch read
+var tempCache [4096]byte
+var cacheFront = 0
+var cacheEnd = 0
 func readPolymorphicEvent(rd *bufio.Reader, readBuf *bytes.Reader) (*model.PolymorphicEvent, error) {
 	var byteLen [8]byte
-	n, err := io.ReadFull(rd, byteLen[:])
-	if err != nil {
-		if err == io.EOF {
-			return nil, nil
+	lengthleft := cacheEnd-cacheFront
+	if lengthleft < 8 {
+		copy(tempCache[0:], tempCache[cacheFront:cacheEnd])
+		n, err := io.ReadAtLeast(rd, tempCache[lengthleft:], 8-(lengthleft))
+		if err != nil {
+			if err == io.EOF {
+				return nil, nil
+			}
+			return nil, errors.Trace(err)
 		}
-		return nil, errors.Trace(err)
+		cacheFront = 0
+		cacheEnd = n + lengthleft
 	}
-	if n < 8 {
+	if cacheEnd-cacheFront < 8 {
 		return nil, errors.Errorf("invalid length data %s, read %d bytes", byteLen, n)
 	}
+	copy(byteLen[:], tempCache[cacheFront:cacheFront+8])
 	dataLen := int(binary.BigEndian.Uint64(byteLen[:]))
+	cacheFront += 8
 
 	data := make([]byte, dataLen)
-	n, err = io.ReadFull(rd, data)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if n != dataLen {
+	if cacheEnd-cacheFront < dataLen {
 		return nil, errors.Errorf("truncated data %s n: %d dataLen: %d", data, n, dataLen)
 	}
+	copy(data[:], tempCache[cacheFront:cacheFront+dataLen])
+	cacheFront += dataLen
 
 	readBuf.Reset(data)
 	ev := &model.PolymorphicEvent{}
-	err = gob.NewDecoder(readBuf).Decode(ev)
+	err := gob.NewDecoder(readBuf).Decode(ev)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
