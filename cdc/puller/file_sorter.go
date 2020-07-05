@@ -258,9 +258,11 @@ var cacheEnd = 0
 func readPolymorphicEvent(rd *bufio.Reader, readBuf *bytes.Reader) (*model.PolymorphicEvent, error) {
 	var byteLen [8]byte
 	lengthleft := cacheEnd-cacheFront
+	var n int
+	var err error
 	if lengthleft < 8 {
 		copy(tempCache[0:], tempCache[cacheFront:cacheEnd])
-		n, err := io.ReadAtLeast(rd, tempCache[lengthleft:], 8-(lengthleft))
+		n, err = io.ReadAtLeast(rd, tempCache[lengthleft:], 8-(lengthleft))
 		if err != nil {
 			if err == io.EOF {
 				return nil, nil
@@ -286,7 +288,7 @@ func readPolymorphicEvent(rd *bufio.Reader, readBuf *bytes.Reader) (*model.Polym
 
 	readBuf.Reset(data)
 	ev := &model.PolymorphicEvent{}
-	err := gob.NewDecoder(readBuf).Decode(ev)
+	err = gob.NewDecoder(readBuf).Decode(ev)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
