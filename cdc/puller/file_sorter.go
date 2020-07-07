@@ -255,33 +255,60 @@ func (h *sortHeap) Pop() interface{} {
 var tempCache [4096]byte
 var cacheFront = 0
 var cacheEnd = 0
+func loadCache(rd *bufio.Reader) (int, error) {
+	lengthleft := cacheEnd-cacheFront
+	var n int
+	var err error
+	copy(tempCache[0:], tempCache[cacheFront:cacheEnd])
+	n, err = io.ReadAtLeast(rd, tempCache[lengthleft:], 1)
+	if err != nil {
+		if err == io.EOF {
+			return 1, nil
+		}
+		return 2, errors.Trace(err)
+	}
+	cacheFront = 0
+	cacheEnd = n + lengthleft
+	return 0, nil
+}
 func readPolymorphicEvent(rd *bufio.Reader, readBuf *bytes.Reader) (*model.PolymorphicEvent, error) {
 	var byteLen [8]byte
 	lengthleft := cacheEnd-cacheFront
 	var n int
 	var err error
 	if lengthleft < 8 {
-		copy(tempCache[0:], tempCache[cacheFront:cacheEnd])
-		n, err = io.ReadAtLeast(rd, tempCache[lengthleft:], 8-(lengthleft))
-		if err != nil {
-			if err == io.EOF {
-				return nil, nil
-			}
+		n, err = loadCache(rd)
+	}
+	if n > 0 {
+		if n == 1 {
+			return nil, nil 
+		} else {
 			return nil, errors.Trace(err)
 		}
-		cacheFront = 0
-		cacheEnd = n + lengthleft
 	}
-	if cacheEnd-cacheFront < 8 {
-		return nil, errors.Errorf("invalid length data %s, read %d bytes", byteLen, n)
+	lengthleft = cacheEnd-cacheFront
+	if lengthleft < 8 {
+		return nil, errors.Errorf("invalid length data %s, read %d bytes", byteLen, lengthleft)
 	}
 	copy(byteLen[:], tempCache[cacheFront:cacheFront+8])
 	dataLen := int(binary.BigEndian.Uint64(byteLen[:]))
 	cacheFront += 8
 
 	data := make([]byte, dataLen)
-	if cacheEnd-cacheFront < dataLen {
-		return nil, errors.Errorf("truncated data %s n: %d dataLen: %d", data, n, dataLen)
+	dataLenLeft := dataLen
+	dataFront := 0
+	for cacheEnd-cacheFront < dataLenLeft {
+		copy(data[dataFront:], tempCache[cacheFront:cacheEnd])
+		dataFront += cacheEnd-cacheFront
+		n, err = loadCache(rd)
+		if n > 0 {
+			if n == 1 {
+				return nil, errors.Errorf("truncated data %s n: %d dataLen: %d", data, n, dataLen)
+			} else {
+				return nil, errors.Trace(err)
+			}
+		}
+		dataLenLeft = dataLen - dataFront
 	}
 	copy(data[:], tempCache[cacheFront:cacheFront+dataLen])
 	cacheFront += dataLen
